@@ -1,5 +1,6 @@
 import whisper
 import os
+import torch
 
 # I installed FFMPEG on my system for audio processing via Chocolatey.
 # --- Configuration ---
@@ -20,8 +21,22 @@ def transcribe_ogg_to_text(file_path: str, model_name: str) -> str:
     
     print(f"Loading Whisper model: {model_name}...")
     try:
-        # Load the model locally
-        model = whisper.load_model(model_name)
+        # Load the model locally. Choose compute dtype based on whether CUDA is available.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        compute_type = "float16" if device == "cuda" else "float32"
+        try:
+            # Newer versions of whisper accept `device` and `compute_type`.
+            model = whisper.load_model(model_name, device=device, compute_type=compute_type)
+        except TypeError as te:
+            # Older versions may not accept compute_type; fall back to specifying device only
+            model = whisper.load_model(model_name, device=device)
+            # Ensure model uses float32 on CPU to avoid FP16 warnings
+            if device == "cpu":
+                try:
+                    model.to(torch.float32)
+                except Exception:
+                    # If this fails, ignore and proceed; at worst a warning may still appear
+                    pass
     except Exception as e:
         print(f"Error loading model. Ensure you have the model downloaded and ffmpeg installed.")
         print(f"Details: {e}")
@@ -30,7 +45,8 @@ def transcribe_ogg_to_text(file_path: str, model_name: str) -> str:
     print(f"Transcribing audio from: {os.path.basename(file_path)}...")
     
     # The transcribe method handles the OGG file automatically
-    result = model.transcribe(file_path)
+    # Force fp16=False on CPU to prevent the FP16 warning
+    result = model.transcribe(file_path, fp16=False)
     
     transcribed_text = result["text"]    
     return transcribed_text
